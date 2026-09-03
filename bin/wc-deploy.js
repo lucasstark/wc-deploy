@@ -12,6 +12,7 @@ import { buildCommand } from '../src/commands/build.js';
 import { statusCommand } from '../src/commands/status.js';
 import { initCommand } from '../src/commands/init.js';
 import { potCommand } from '../src/commands/pot.js';
+import { minifyCommand } from '../src/commands/minify.js';
 import { qitCommand, qitVersionCommand } from '../src/commands/qit.js';
 import { phpcsCommand } from '../src/commands/phpcs.js';
 import { securityCommand } from '../src/commands/security.js';
@@ -46,6 +47,13 @@ program
   .description('Generate POT file for translations')
   .option('--dry-run', 'Simulate without making changes')
   .action(potCommand);
+
+// Minify command
+program
+  .command('minify')
+  .description('Minify CSS files only (no POT, no zip)')
+  .option('--dry-run', 'Simulate without making changes')
+  .action(minifyCommand);
 
 // PHPCS command
 program
