@@ -17,6 +17,8 @@ import { qitCommand, qitVersionCommand } from '../src/commands/qit.js';
 import { phpcsCommand } from '../src/commands/phpcs.js';
 import { securityCommand } from '../src/commands/security.js';
 import { checkCommand } from '../src/commands/check.js';
+import { checklistCommand } from '../src/commands/checklist.js';
+import { monitorCommand } from '../src/commands/monitor.js';
 import { e2eCommand, e2eListCommand } from '../src/commands/e2e.js';
 
 program
@@ -70,6 +72,7 @@ program
   .command('security')
   .description('Run local PHPCS security check, then QIT remote security scan')
   .option('--skip-build', 'Skip build step before QIT test')
+  .option('--skip-phpcs', 'Skip the local PHPCS gate and go straight to the remote QIT scan')
   .option('--verbose', 'Show detailed output')
   .action(securityCommand);
 
@@ -95,6 +98,12 @@ program
   .command('check')
   .description('Fetch and display latest WordPress and WooCommerce versions')
   .action(checkCommand);
+
+// Checklist command
+program
+  .command('checklist')
+  .description('Print the recommended deployment workflow')
+  .action(checklistCommand);
 
 // E2E command
 program
@@ -123,10 +132,9 @@ program
 // Deploy command
 program
   .command('deploy')
-  .description('Full deployment: version bump, build, git tag, and deploy to WooCommerce.com')
-  .option('-v, --version <version>', 'Version number (e.g., 2.3.8)')
+  .description('Build and deploy to WooCommerce.com. Versions in package.json, plugin file, and changelog.txt must already match.')
+  .option('--assert-version <version>', 'Assert the version being deployed (errors if it does not match the repo). Recommended for scripted/agent use.')
   .option('--skip-phpcs', 'Skip PHPCS coding standards check')
-  .option('--skip-tests', 'Skip QIT tests')
   .option('--skip-build', 'Skip build step')
   .option('--skip-deploy', 'Skip deployment to WooCommerce.com')
   .option('--dry-run', 'Simulate without making changes')
@@ -135,8 +143,19 @@ program
 // Status command
 program
   .command('status')
-  .description('Check WooCommerce.com deployment status')
+  .description('Check WooCommerce.com deployment status (one-shot, current dir only)')
   .action(statusCommand);
+
+// Monitor command - tracks all in-flight runs across extensions
+program
+  .command('monitor')
+  .description('List/poll/follow tracked deploy + QIT runs (state at ~/.wc-deploy/runs.json)')
+  .option('--refresh', 'Poll the cloud for non-terminal runs and update state')
+  .option('--watch', 'Loop refresh until everything terminal; notifies on completion')
+  .option('--json', 'Output runs as JSON')
+  .option('--purge', 'Remove terminal entries from state')
+  .option('--purge-all', 'Remove ALL entries from state')
+  .action(monitorCommand);
 
 // Handle unknown commands
 program.on('command:*', function () {
@@ -149,10 +168,12 @@ program.on('command:*', function () {
   console.log(chalk.cyan('  security   ') + chalk.gray('Local PHPCS + QIT remote security scan'));
   console.log(chalk.cyan('  qit        ') + chalk.gray('Run QIT tests (use "qit version" to check deployed version)'));
   console.log(chalk.cyan('  check      ') + chalk.gray('Fetch latest WordPress and WooCommerce versions'));
+  console.log(chalk.cyan('  checklist  ') + chalk.gray('Print the recommended deployment workflow'));
   console.log(chalk.cyan('  e2e        ') + chalk.gray('Run E2E tests (use "e2e list" to see packages)'));
   console.log(chalk.cyan('  version    ') + chalk.gray('Update version numbers'));
   console.log(chalk.cyan('  deploy     ') + chalk.gray('Full deployment workflow'));
-  console.log(chalk.cyan('  status     ') + chalk.gray('Check deployment status (one-time)'));
+  console.log(chalk.cyan('  status     ') + chalk.gray('Check deployment status (one-time, current dir)'));
+  console.log(chalk.cyan('  monitor    ') + chalk.gray('List/poll/follow tracked deploy + QIT runs'));
   console.log(chalk.yellow('\nSee --help for more details.\n'));
   process.exit(1);
 });

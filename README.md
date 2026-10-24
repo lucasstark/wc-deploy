@@ -184,10 +184,14 @@ Full deployment workflow with background monitoring:
 
 The background monitor:
 - Polls deployment status every 30 seconds (up to 30 min)
-- On success: creates git tag, pushes commit + tags, macOS notification
-- On failure: notification with error, leaves commit unpushed
+- On success: macOS notification "ready to tag"
+- On warning: the same notification, plus the failed spec names of each warning
+  test run (`wc-deploy monitor` lists them; `escope qit-runs <slug>` shows
+  whether they persist across releases)
+- On failure: notification with error
 
-This ensures git tags only exist for successfully deployed versions.
+Tag and push by hand once the run settles, so git tags only exist for
+deployed versions.
 
 ```bash
 es deploy

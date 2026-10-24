@@ -6,6 +6,7 @@ import semver from 'semver';
 import { loadConfig, getCurrentVersion } from '../utils/config-loader.js';
 import { logger } from '../utils/logger.js';
 import { runBuild } from '../tasks/builder.js';
+import { recordQit } from '../state/runs-store.js';
 
 const AVAILABLE_TESTS = ['security', 'activation', 'api', 'e2e', 'phpstan', 'phpcompatibility'];
 
@@ -100,6 +101,7 @@ export async function qitCommand(testType, options) {
 
   const config = await loadConfig();
   const slug = config.slug;
+  const version = await getCurrentVersion();
   const distPath = config.distPath || './dist';
   const zipPath = join(process.cwd(), distPath, `${slug}.zip`);
 
@@ -160,7 +162,7 @@ export async function qitCommand(testType, options) {
   let allPassed = true;
 
   for (const test of testsToRun) {
-    const success = await runQitTest(test, slug, zipPath, options);
+    const success = await runQitTest(test, slug, version, zipPath, options);
     if (!success) {
       allPassed = false;
       if (!options.continueOnError) {
@@ -195,7 +197,7 @@ async function validateZip(zipPath) {
 /**
  * Run a single QIT test
  */
-async function runQitTest(testType, slug, zipPath, options) {
+async function runQitTest(testType, slug, version, zipPath, options) {
   // Ensure absolute path for zip
   const absoluteZipPath = zipPath.startsWith('/') ? zipPath : join(process.cwd(), zipPath);
 
@@ -219,9 +221,12 @@ async function runQitTest(testType, slug, zipPath, options) {
   // Slug goes last (before any -- passthrough args)
   args.push(slug);
 
-  // Log the full command for debugging
   const fullCommand = `qit ${args.join(' ')}`;
   console.log(chalk.gray(`\n  Command: ${fullCommand}\n`));
+
+  if (options.wait === false) {
+    return runQitTestNonBlocking(args, testType, slug, version);
+  }
 
   const spinner = logger.spinner(`Running ${testType} test...`);
 
@@ -250,4 +255,68 @@ async function runQitTest(testType, slug, zipPath, options) {
 
     return false;
   }
+}
+
+async function runQitTestNonBlocking(args, testType, slug, version) {
+  console.log(chalk.gray('  (--no-wait: kicking off and recording for later check)\n'));
+
+  try {
+    const result = await execa('qit', args, { stdio: 'pipe', cwd: process.cwd() });
+
+    const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+    if (result.stdout) console.log(result.stdout);
+
+    const { qitRunId, qitResultUrl } = parseQitOutput(output);
+
+    await recordQit({
+      slug,
+      version,
+      testType,
+      qitRunId,
+      qitResultUrl,
+      cwd: process.cwd()
+    });
+
+    if (qitRunId) {
+      logger.success(`${testType} test queued (run ${qitRunId})`);
+    } else {
+      logger.warn(`${testType} test queued, but run ID could not be parsed from QIT output`);
+      logger.info('Recorded anyway; check the QIT dashboard for status');
+    }
+    if (qitResultUrl) {
+      console.log(chalk.gray(`  ${qitResultUrl}`));
+    }
+    return true;
+  } catch (error) {
+    if (error.stderr) console.log(chalk.red(error.stderr));
+    if (error.stdout) console.log(error.stdout);
+    logger.error(`Failed to start ${testType} test: ${error.message}`);
+    return false;
+  }
+}
+
+function parseQitOutput(text) {
+  let qitRunId = null;
+  let qitResultUrl = null;
+
+  const urlMatch = text.match(/https?:\/\/[^\s]*qit[^\s]*/i);
+  if (urlMatch) {
+    qitResultUrl = urlMatch[0].replace(/[.,;)\]]+$/, '');
+  }
+
+  const idPatterns = [
+    /(?:run\s*id|test\s*run\s*id)\s*[:=]\s*([A-Za-z0-9-]+)/i,
+    /\/manager\/run\/(\d+)/i,
+    /\/run\/(\d+)/,
+    /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
+  ];
+  for (const pattern of idPatterns) {
+    const m = text.match(pattern);
+    if (m) {
+      qitRunId = m[1];
+      break;
+    }
+  }
+
+  return { qitRunId, qitResultUrl };
 }

@@ -340,7 +340,14 @@ export async function runPhpcsCheck(options = {}) {
 
   const args = [
     `--standard=${standard}`,
-    '--report=summary',
+    // Decide pass/fail from real counts, not the exit code. PHPCS exits non-zero
+    // for warnings too, and -n does not reliably demote them (it reports them in
+    // the errors column instead), which used to fail the gate on warnings alone.
+    '--report=json',
+    // PHPCS prints a colored progress banner to stdout before the JSON payload,
+    // which breaks JSON.parse. -q suppresses it; --no-colors drops ANSI escapes.
+    '-q',
+    '--no-colors',
     '--extensions=php',
     '--ignore=vendor/*,node_modules/*,dist/*,.dist/*,tests/*,assets/*',
     '.'
@@ -352,15 +359,29 @@ export async function runPhpcsCheck(options = {}) {
       reject: false
     });
 
-    if (result.exitCode === 0) {
-      return true;
-    } else {
-      // Show the summary
-      if (result.stdout) {
-        console.log(result.stdout);
-      }
+    let totals;
+    try {
+      // Be tolerant of any preamble PHPCS may still emit before the JSON.
+      const raw = result.stdout || '';
+      totals = JSON.parse(raw.slice(raw.indexOf('{'))).totals;
+    } catch {
+      logger.error('Could not parse PHPCS output; treating as failure.');
+      if (result.stdout) console.log(result.stdout.slice(0, 2000));
       return false;
     }
+
+    const errors = totals?.errors ?? 0;
+    const warnings = totals?.warnings ?? 0;
+    const failed = options.errorsOnly ? errors > 0 : errors > 0 || warnings > 0;
+
+    if (warnings > 0) {
+      logger.warn(`PHPCS: ${warnings} warning(s)${options.errorsOnly ? ' (non-blocking)' : ''}`);
+    }
+    if (errors > 0) {
+      logger.error(`PHPCS: ${errors} error(s)`);
+    }
+
+    return !failed;
   } catch (error) {
     logger.error(`PHPCS check failed: ${error.message}`);
     return false;
