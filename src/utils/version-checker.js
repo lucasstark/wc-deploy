@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import chalk from 'chalk';
 import { logger } from './logger.js';
+import { extractVersionFromFile } from '../tasks/version-updater.js';
 
 /**
  * Extract version from package.json
@@ -66,6 +67,16 @@ export async function checkVersionConsistency(config) {
   console.log(chalk.gray('  ├─ package.json:  '), versions.package || chalk.red('NOT FOUND'));
   console.log(chalk.gray('  ├─ plugin file:   '), versions.plugin || chalk.red('NOT FOUND'));
   console.log(chalk.gray('  └─ changelog.txt: '), versions.changelog || chalk.red('NOT FOUND'));
+
+  // Every other configured version file (asset version constants and the like).
+  const extraFiles = (config.versionFiles || []).filter(
+    vf => vf.file !== 'package.json' && !(vf.file === config.mainFile && vf.pattern.includes('Version:'))
+  );
+  for (const vf of extraFiles) {
+    const key = `${vf.file}: ${vf.pattern}`;
+    versions[key] = await extractVersionFromFile(join(process.cwd(), vf.file), vf.pattern);
+    console.log(chalk.gray(`     ${key}  `), versions[key] || chalk.red('NOT FOUND'));
+  }
   console.log();
 
   // Check if any are missing
@@ -73,6 +84,9 @@ export async function checkVersionConsistency(config) {
   if (!versions.package) missing.push('package.json');
   if (!versions.plugin) missing.push(config.mainFile);
   if (!versions.changelog) missing.push('changelog.txt');
+  for (const vf of extraFiles) {
+    if (!versions[`${vf.file}: ${vf.pattern}`]) missing.push(`${vf.file} (${vf.pattern})`);
+  }
 
   if (missing.length > 0) {
     logger.error(`Version not found in: ${missing.join(', ')}`);
@@ -80,8 +94,7 @@ export async function checkVersionConsistency(config) {
   }
 
   // Check if all match
-  const allMatch = versions.package === versions.plugin &&
-                   versions.plugin === versions.changelog;
+  const allMatch = Object.values(versions).every(v => v === versions.package);
 
   if (!allMatch) {
     logger.error('Version mismatch detected!');
