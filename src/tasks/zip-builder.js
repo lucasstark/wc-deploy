@@ -79,6 +79,31 @@ function shouldExclude(path, excludeList) {
 }
 
 /**
+ * List the files that ship in the distribution zip, relative to root.
+ * Uses the same exclusion rules as the zip itself.
+ */
+export async function listShippedFiles(root, excludeList = [], prefix = '') {
+  const files = [];
+  const entries = await readdir(join(root, prefix), { withFileTypes: true });
+
+  for (const entry of entries) {
+    const relPath = join(prefix, entry.name);
+
+    if (shouldExclude(join(root, relPath), excludeList)) {
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      files.push(...await listShippedFiles(root, excludeList, relPath));
+    } else {
+      files.push(relPath);
+    }
+  }
+
+  return files;
+}
+
+/**
  * Build distribution zip file
  */
 export async function buildDistributionZip(config, version, dryRun = false) {

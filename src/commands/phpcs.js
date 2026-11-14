@@ -5,6 +5,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import inquirer from 'inquirer';
 import { loadConfig } from '../utils/config-loader.js';
+import { listShippedFiles } from '../tasks/zip-builder.js';
 import { logger } from '../utils/logger.js';
 
 // Global paths
@@ -93,6 +94,18 @@ async function getSecurityRuleset() {
     return GLOBAL_SECURITY_RULESET;
   }
   return null;
+}
+
+// Shipped paths PHPCS leaves alone: third-party code and built assets.
+const PHPCS_IGNORE = '--ignore=vendor/*,assets/*';
+
+/**
+ * Get the PHP files that ship in the distribution zip
+ */
+async function getShippedPhpFiles() {
+  const config = await loadConfig();
+  const files = await listShippedFiles(process.cwd(), config.exclude || []);
+  return files.filter(file => file.endsWith('.php'));
 }
 
 /**
@@ -219,15 +232,13 @@ export async function phpcsCommand(options) {
     args.push('-n');
   }
 
-  // File or directory to scan
-  const target = options.path || '.';
-  args.push(target);
-
-  // Add exclusions (security ruleset has them built in, but add for CLI paths)
+  // An explicit path is scanned as given. Otherwise scan the PHP that ships.
   if (options.path) {
-    // No exclusions for specific path
+    args.push(options.path);
   } else {
-    args.push('--ignore=vendor/*,node_modules/*,dist/*,.dist/*,tests/*,assets/*');
+    const files = await getShippedPhpFiles();
+    console.log(chalk.gray(`Scanning ${files.length} shipped PHP files\n`));
+    args.push(PHPCS_IGNORE, ...files);
   }
 
   try {
@@ -275,11 +286,10 @@ async function runPhpcbf(phpcbf, options) {
   args.push(`--standard=${standard}`);
   args.push('--extensions=php');
 
-  const target = options.path || '.';
-  args.push(target);
-
-  if (!options.path) {
-    args.push('--ignore=vendor/*,node_modules/*,dist/*,.dist/*,tests/*,assets/*');
+  if (options.path) {
+    args.push(options.path);
+  } else {
+    args.push(PHPCS_IGNORE, ...await getShippedPhpFiles());
   }
 
   try {
@@ -349,8 +359,9 @@ export async function runPhpcsCheck(options = {}) {
     '-q',
     '--no-colors',
     '--extensions=php',
-    '--ignore=vendor/*,node_modules/*,dist/*,.dist/*,tests/*,assets/*',
-    '.'
+    PHPCS_IGNORE,
+    // The gate checks the PHP that ships in the zip.
+    ...await getShippedPhpFiles()
   ];
 
   try {

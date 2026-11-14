@@ -127,7 +127,7 @@ es build --force                # Continue despite version mismatch
 
 ### `es phpcs`
 
-Run PHP CodeSniffer with security-focused rules:
+Run PHP CodeSniffer with security-focused rules. PHPCS scans the PHP files that ship in the distribution zip: the zip's default exclusions and the `exclude` list in `.deployrc.json` apply to both. `vendor` and `assets` are skipped. `--path` scans the given path as is.
 
 ```bash
 es phpcs                    # Security checks only (escaping, sanitization, SQL)

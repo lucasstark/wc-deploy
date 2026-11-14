@@ -209,7 +209,7 @@ async function runQitTest(testType, slug, version, zipPath, options) {
   ];
 
   // Add --wait unless --no-wait is specified
-  if (!options.noWait) {
+  if (options.wait !== false) {
     args.push('--wait');
   }
 
