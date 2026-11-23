@@ -42,6 +42,12 @@ const STEPS = [
     title: 'Tag and push (after deploy succeeds)',
     cmd: 'git tag 1.2.3 && git push && git push --tags',
     note: 'Run only after monitor reports success.'
+  },
+  {
+    title: 'Deploy the demo site',
+    cmd: '~/elementstark/scripts/production-lock set <slug> 1.2.3 && ~/elementstark/scripts/production-lock deploy',
+    note: 'Production runs the tags listed in ~/elementstark/production.lock. The deploy checks out exactly those; it never pulls master.',
+    claudeNote: 'Run after the tag is pushed. Never git pull inside the production container; the next deploy undoes it.'
   }
 ];
 
