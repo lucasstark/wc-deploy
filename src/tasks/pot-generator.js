@@ -1,5 +1,6 @@
-import { access, readFile, writeFile, mkdir, readdir } from 'fs/promises';
-import { join, dirname } from 'path';
+import { access, readFile, writeFile, mkdir } from 'fs/promises';
+import { join, basename } from 'path';
+import { listShippedFiles } from './zip-builder.js';
 import wpPot from 'wp-pot';
 import { logger } from '../utils/logger.js';
 
@@ -69,42 +70,29 @@ async function getPluginInfo(mainFile) {
 }
 
 /**
- * Collect translatable strings from the JavaScript sources under src/.
+ * Collect translatable strings from the JavaScript files that ship in the zip.
+ * WordPress loads a script's JSON translations by the md5 of the script's path,
+ * and `wp i18n make-json` names each JSON file by the md5 of the `#:` reference,
+ * so each reference names the built file, never its source under src/.
  * wp-pot's JS parser stops on modern syntax, so this reads the literal
- * arguments of __() calls that use the plugin's text domain, plus the
- * title, description and keywords of each block.json.
+ * arguments of __() calls that use the plugin's text domain (minified calls
+ * read `(0,t.__)("…","domain")`), plus the title, description and keywords of
+ * each block.json.
  */
-async function collectJsStrings(textDomain) {
-  const files = [];
-  const walk = async (dir) => {
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch (error) {
-      return;
-    }
-    for (const entry of entries) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(path);
-      } else if (/\.(js|jsx)$/.test(entry.name) || entry.name === 'block.json') {
-        files.push(path);
-      }
-    }
-  };
-  await walk(join(process.cwd(), 'src'));
-  files.sort();
+async function collectJsStrings(textDomain, excludeList) {
+  const files = (await listShippedFiles(process.cwd(), excludeList))
+    .filter((file) => (/\.(js|jsx)$/.test(file) && !/\.min\.js$/.test(file)) || basename(file) === 'block.json')
+    .sort();
 
   const quoted = String.raw`('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")`;
-  const call = new RegExp(String.raw`\b__\(\s*${quoted}\s*,\s*${quoted}\s*[,)]`, 'g');
+  const call = new RegExp(String.raw`\b__\)?\(\s*${quoted}\s*,\s*${quoted}\s*[,)]`, 'g');
   const unquote = (text) => text.slice(1, -1).replace(/\\(['"\\])/g, '$1');
   const strings = [];
 
-  for (const file of files) {
-    const ref = file.slice(process.cwd().length + 1);
-    const content = await readFile(file, 'utf-8');
+  for (const ref of files) {
+    const content = await readFile(join(process.cwd(), ref), 'utf-8');
 
-    if (file.endsWith('block.json')) {
+    if (basename(ref) === 'block.json') {
       let block;
       try {
         block = JSON.parse(content);
@@ -133,29 +121,42 @@ async function collectJsStrings(textDomain) {
 }
 
 /**
- * Append the JavaScript strings that the PHP pass did not already list.
+ * Add the JavaScript references to the .pot. A string the PHP pass already
+ * listed gains the references, so make-json puts it in each script's JSON.
  */
-async function appendJsStrings(potFile, textDomain) {
-  const strings = await collectJsStrings(textDomain);
+async function appendJsStrings(potFile, textDomain, excludeList) {
+  const strings = await collectJsStrings(textDomain, excludeList);
   if (!strings.length) {
     return;
   }
 
-  let pot = await readFile(potFile, 'utf-8');
-  const escape = (text) => text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
-  const seen = new Set();
-  let added = '';
-
+  const refsById = new Map();
   for (const { id, ref } of strings) {
-    const entry = `msgid "${escape(id)}"`;
-    if (seen.has(entry) || pot.includes(`\n${entry}\n`)) {
-      continue;
+    if (!refsById.has(id)) {
+      refsById.set(id, new Set());
     }
-    seen.add(entry);
-    added += `\n#: ${ref}\n${entry}\nmsgstr ""\n`;
+    refsById.get(id).add(ref);
   }
 
-  await writeFile(potFile, pot.replace(/\s*$/, '\n') + added);
+  let pot = (await readFile(potFile, 'utf-8')).replace(/\s*$/, '\n');
+  const escape = (text) => text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  let added = '';
+
+  for (const [id, refs] of refsById) {
+    const entry = `msgid "${escape(id)}"`;
+    const refLines = [...refs].map((ref) => `#: ${ref}\n`).join('');
+    const at = pot.indexOf(`\n${entry}\n`);
+    const start = at === -1 ? -1 : pot.lastIndexOf('\n\n', at) + 2;
+
+    // A msgctxt entry is a different string; only a context-free entry gains the references.
+    if (at !== -1 && !pot.slice(start, at).includes('msgctxt')) {
+      pot = pot.slice(0, start) + refLines + pot.slice(start);
+    } else {
+      added += `\n${refLines}${entry}\nmsgstr ""\n`;
+    }
+  }
+
+  await writeFile(potFile, pot + added);
 }
 
 /**
@@ -203,7 +204,7 @@ export async function generatePotFile(config, dryRun = false) {
       team: pluginInfo.author || ''
     });
 
-    await appendJsStrings(potFile, textDomain);
+    await appendJsStrings(potFile, textDomain, config.exclude || []);
 
     spinner.succeed(`POT file generated: ${textDomain}.pot`);
     return true;
